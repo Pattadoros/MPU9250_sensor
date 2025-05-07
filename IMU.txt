@@ -1,0 +1,69 @@
+import time
+import numpy as np
+from mpu9250_jmdev.registers import *
+from mpu9250_jmdev.mpu_9250 import MPU9250
+
+# === Sensor Link ===
+device = MPU9250(
+    address_ak=AK8963_ADDRESS,
+    address_mpu_master=MPU9050_ADDRESS_68,
+    address_mpu_slave=None,
+    bus=1,
+    gfs=GFS_1000,
+    afs=AFS_8G,
+    mfs=AK8963_BIT_16,
+    mode=AK8963_MODE_C100HZ
+)
+
+device.configure()
+
+# === Offset Sampling Utilities ===
+def gather_samples(fn, axis=None, count=1000, delay=0.01):
+    collected = []
+    for _ in range(count):
+        values = fn()
+        collected.append(values[axis] if axis is not None else values)
+        time.sleep(delay)
+    return np.array(collected)
+
+def estimate_shift(vector_data, gravity_align=False):
+    mean_val = np.mean(vector_data, axis=0)
+    return mean_val - 1.0 if gravity_align else mean_val
+
+# === Bias Extraction ===
+def define_accel_correction(target, loops=1000):
+    labels = ['X↑', 'Y↑', 'Z↑']
+    adjustments = []
+    for idx in range(3):
+        print(f"Place {labels[idx]} upward. Then continue...")
+        input("Ready? Press Enter.")
+        sample = gather_samples(target.readAccelerometerMaster, axis=idx, count=loops)
+        offset = estimate_shift(sample, gravity_align=True)
+        adjustments.append(offset)
+        print(f"Refined bias on axis-{idx}: {round(offset, 3)}")
+    return adjustments
+
+# def define_gyro_correction(target, loops=1000):
+#     print("Hold device steady... acquiring gyro baseline.")
+#     bundle = gather_samples(target.readGyroscopeMaster, count=loops)
+#     offset = estimate_shift(bundle)
+#     print("Angular baseline:", [round(x, 3) for x in offset])
+#     return offset.tolist()
+
+# === Offset Fetching ===
+accel_bias = define_accel_correction(device)
+# gyro_bias = define_gyro_correction(device)
+
+# === Realtime Feedback ===
+while True:
+    raw_linear = device.readAccelerometerMaster()
+    # raw_angular = device.readGyroscopeMaster()
+
+    adj_linear = [raw_linear[i] - accel_bias[i] for i in range(3)]
+    print("Raw linear:", raw_linear)
+    print("Offset linear:", [round(val, 3) for val in adj_linear])
+
+    # adj_angular = [raw_angular[i] - gyro_bias[i] for i in range(3)]
+    # print("Offset angular:", [round(val, 2) for val in adj_angular])
+
+    time.sleep(1)
